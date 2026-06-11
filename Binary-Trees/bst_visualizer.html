@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>BST Visualizer - Insert / Search / Delete</title>
+<style>
+  :root{
+    --bg:#0f1626; --panel:#16203a; --panel2:#1c2a4a; --accent:#ffb703;
+    --accent2:#4a90d9; --text:#e8edf7; --muted:#9bb0d3; --line:#999;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; font-family:Segoe UI, Arial, sans-serif; background:var(--bg); color:var(--text);
+    padding:16px;
+  }
+  h1{font-size:22px; margin:0 0 4px 0;}
+  .sub{color:var(--muted); margin-bottom:16px; font-size:14px;}
+  .top-controls{
+    display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-bottom:14px;
+    background:var(--panel); padding:12px; border-radius:10px;
+  }
+  select, button{
+    background:var(--panel2); color:var(--text); border:1px solid #2e3f66;
+    border-radius:6px; padding:8px 12px; font-size:14px; cursor:pointer;
+  }
+  button:hover, select:hover{border-color:var(--accent2);}
+  button:disabled{opacity:0.4; cursor:default;}
+  .step-counter{font-size:14px; color:var(--muted); margin-left:auto;}
+  .layout{
+    display:grid; grid-template-columns: 1.4fr 1fr; gap:14px;
+  }
+  @media (max-width: 950px){ .layout{grid-template-columns: 1fr;} }
+  .panel{background:var(--panel); border-radius:10px; padding:14px;}
+  .tree-wrap{min-height:380px; display:flex; flex-direction:column;}
+  svg{width:100%; flex:1; background:#0b1220; border-radius:8px; min-height:340px;}
+  .message{
+    margin-top:12px; padding:12px; background:var(--panel2); border-left:4px solid var(--accent);
+    border-radius:6px; font-size:15px; line-height:1.4; min-height:48px;
+  }
+  .message b{color:var(--accent);}
+  .code-title{font-size:13px; color:var(--muted); margin:14px 0 4px 0; text-transform:uppercase; letter-spacing:1px;}
+  pre{
+    background:#0b1220; border-radius:8px; padding:10px; margin:0;
+    font-family:Consolas, "Courier New", monospace; font-size:13px; line-height:1.55; overflow-x:auto;
+  }
+  .line{display:block; padding:1px 6px; border-radius:3px; white-space:pre;}
+  .line.active{background:rgba(255,183,3,0.25); box-shadow: inset 3px 0 0 var(--accent);}
+  .legend{display:flex; gap:16px; flex-wrap:wrap; margin-top:10px; font-size:13px; color:var(--muted);}
+  .legend span{display:inline-flex; align-items:center; gap:6px;}
+  .dot{width:14px; height:14px; border-radius:50%; display:inline-block;}
+  .dot.normal{background:#4a90d9; border:2px solid #2c5d8a;}
+  .dot.active{background:#ffb703; border:2px solid #e85d04;}
+  optgroup{font-weight:bold;}
+</style>
+</head>
+<body>
+
+<h1>BST Visualizer — Insert / Search / Delete</h1>
+<div class="sub">
+  Step through exactly what your code does, node by node. Main focus: <b>delete (removeNode / removeNodeHelper)</b>,
+  with 10 detailed delete scenarios. Insert and search are also included for completeness.
+</div>
+
+<div class="top-controls">
+  <label for="scenario">Scenario:</label>
+  <select id="scenario"></select>
+  <button id="prevBtn">⟵ Prev</button>
+  <button id="nextBtn">Next ⟶</button>
+  <button id="playBtn">▶ Play</button>
+  <button id="resetBtn">⟲ Reset</button>
+  <span class="step-counter" id="stepCounter">Step 1 / 1</span>
+</div>
+
+<div class="layout">
+  <div class="panel tree-wrap">
+    <svg id="svg" viewBox="0 0 300 80" xmlns="http://www.w3.org/2000/svg"></svg>
+    <div class="message" id="message">Select a scenario above.</div>
+    <div class="legend">
+      <span><i class="dot normal"></i> Normal node</span>
+      <span><i class="dot active"></i> Node currently being looked at / changed</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="code-title">search() — used at the start of removeNode()</div>
+    <pre id="code-search"></pre>
+
+    <div class="code-title">removeNodeHelper() — the core delete logic</div>
+    <pre id="code-remove"></pre>
+
+    <div class="code-title">insertNodeHelper() — for insert scenarios</div>
+    <pre id="code-insert"></pre>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   1. PLAIN TREE HELPERS (no trace) — used to build initial tree
+   ============================================================ */
+function insertPlain(node, val){
+  if(node === null) return {val, left:null, right:null};
+  if(val < node.val) node.left = insertPlain(node.left, val);
+  else if(val > node.val) node.right = insertPlain(node.right, val);
+  return node; // duplicates ignored, same as your insertNodeHelper
+}
+function buildTree(values){
+  let root = null;
+  for(const v of values) root = insertPlain(root, v);
+  return root;
+}
+function clone(node){
+  return node === null ? null : {val:node.val, left:clone(node.left), right:clone(node.right)};
+}
+/* snapshot helper: 'ref' is either {root: TreeNode|null} or a raw TreeNode|null */
+function snap(ref, highlight, msg, kind){
+  const r = (ref && Object.prototype.hasOwnProperty.call(ref,'root')) ? ref.root : ref;
+  return {tree: clone(r), highlight, msg, kind};
+}
+
+/* ============================================================
+   2. SEARCH WITH TRACE  (mirrors: bool search(int data))
+   ============================================================ */
+function searchHelperTrace(node, data, trace, ref){
+  if(node === null){
+    trace.push(snap(ref, null, `Reached a null pointer -> return false. ${data} is NOT in the tree.`, 's-null'));
+    return false;
+  }
+  if(node.val === data){
+    trace.push(snap(ref, node.val, `node->val == ${data} -> return true. Found it!`, 's-eq'));
+    return true;
+  } else if(node.val > data){
+    trace.push(snap(ref, node.val, `${node.val} > ${data} -> go LEFT.`, 's-left'));
+    return searchHelperTrace(node.left, data, trace, ref);
+  } else {
+    trace.push(snap(ref, node.val, `${node.val} < ${data} -> go RIGHT.`, 's-right'));
+    return searchHelperTrace(node.right, data, trace, ref);
+  }
+}
+function searchTopTrace(root, data, trace, ref){
+  if(root === null){
+    trace.push(snap(ref, null, `root == nullptr -> return false immediately.`, 's-null'));
+    return false;
+  }
+  if(root.val === data){
+    trace.push(snap(ref, root.val, `root->val == ${data} -> return true immediately.`, 's-eq'));
+    return true;
+  }
+  return searchHelperTrace(root, data, trace, ref);
+}
+
+/* ============================================================
+   3. DELETE WITH TRACE (mirrors removeNode + removeNodeHelper)
+   ============================================================ */
+function removeHelperTrace(node, data, trace, ref){
+  if(node === null){
+    trace.push(snap(ref, null, `root == nullptr -> return nullptr (nothing to do here).`, 'null'));
+    return null;
+  }
+  if(node.val > data){
+    trace.push(snap(ref, node.val, `${node.val} > ${data} -> recurse into LEFT subtree.`, 'cmp-left'));
+    node.left = removeHelperTrace(node.left, data, trace, ref);
+  } else if(node.val < data){
+    trace.push(snap(ref, node.val, `${node.val} < ${data} -> recurse into RIGHT subtree.`, 'cmp-right'));
+    node.right = removeHelperTrace(node.right, data, trace, ref);
+  } else {
+    trace.push(snap(ref, node.val, `${node.val} == ${data} -> THIS is the node to delete.`, 'found'));
+
+    if(node.left === null && node.right === null){
+      trace.push(snap(ref, node.val, `Node ${data} has NO children (it's a leaf) -> remove it (return nullptr to parent).`, 'leaf'));
+      return null;
+
+    } else if(node.right !== null){
+      // successor = leftmost node of right subtree
+      let cur = node.right;
+      let path = [cur.val];
+      while(cur.left !== null){ cur = cur.left; path.push(cur.val); }
+      const succ = cur.val;
+      trace.push(snap(ref, node.val,
+        `Node ${data} has a RIGHT child -> find its successor: go right once then keep going left. ` +
+        `Path: ${path.join(' → ')}. Successor = ${succ}.`, 'succ-find'));
+
+      node.val = succ;
+      trace.push(snap(ref, succ,
+        `root->val replaced: ${data} → ${succ}. Now we must remove the OLD ${succ} node ` +
+        `from the right subtree, so call removeNodeHelper(root->right, ${succ}).`, 'succ-replace'));
+
+      node.right = removeHelperTrace(node.right, succ, trace, ref);
+
+    } else {
+      // only left child -> use predecessor (rightmost of left subtree)
+      let cur = node.left;
+      let path = [cur.val];
+      while(cur.right !== null){ cur = cur.right; path.push(cur.val); }
+      const pred = cur.val;
+      trace.push(snap(ref, node.val,
+        `Node ${data} has NO right child but HAS a left child -> find its predecessor: ` +
+        `go left once then keep going right. Path: ${path.join(' → ')}. Predecessor = ${pred}.`, 'pred-find'));
+
+      node.val = pred;
+      trace.push(snap(ref, pred,
+        `root->val replaced: ${data} → ${pred}. Now we must remove the OLD ${pred} node ` +
+        `from the left subtree, so call removeNodeHelper(root->left, ${pred}).`, 'pred-replace'));
+
+      node.left = removeHelperTrace(node.left, pred, trace, ref);
+    }
+  }
+  trace.push(snap(ref, node ? node.val : null, `return root; — this subtree is now fixed up, hand it back to the parent call.`, 'return'));
+  return node;
+}
+
+function deleteOpTrace(root, data, trace){
+  const ref = {root};
+  let found;
+
+  if(root === null){
+    trace.push({tree:null, highlight:null, msg:`root == nullptr -> search(${data}) returns false immediately.`, kind:'s-null'});
+    found = false;
+  } else if(root.val === data){
+    trace.push(snap(ref, root.val, `root->val == ${data} -> search(${data}) returns true immediately.`, 's-eq'));
+    found = true;
+  } else {
+    found = searchHelperTrace(root, data, trace, ref);
+  }
+
+  if(!found){
+    trace.push(snap(ref, null, `search(${data}) was false -> print "could not found node : ${data}". Tree is left UNCHANGED.`, 'notfound'));
+    return ref.root;
+  }
+
+  trace.push(snap(ref, data, `search(${data}) was true -> call removeNodeHelper(root, ${data}).`, 'start'));
+  ref.root = removeHelperTrace(ref.root, data, trace, ref);
+  trace.push(snap(ref, null, `removeNodeHelper finished. The tree is now updated.`, 'done'));
+  return ref.root;
+}
+
+/* ============================================================
+   4. INSERT WITH TRACE (mirrors insertNodeHelper)
+   ============================================================ */
+function insertHelperTrace(node, data, trace, ref){
+  if(node === null){
+    trace.push(snap(ref, null, `Found a null spot -> create new TreeNode(${data}) here.`, 'ins-empty'));
+    return {val:data, left:null, right:null};
+  }
+  if(node.val > data){
+    trace.push(snap(ref, node.val, `${node.val} > ${data} -> go LEFT.`, 'ins-left'));
+    node.left = insertHelperTrace(node.left, data, trace, ref);
+  } else if(node.val < data){
+    trace.push(snap(ref, node.val, `${node.val} < ${data} -> go RIGHT.`, 'ins-right'));
+    node.right = insertHelperTrace(node.right, data, trace, ref);
+  } else {
+    trace.push(snap(ref, node.val, `${node.val} == ${data} -> DUPLICATE. Nothing happens (your code ignores it).`, 'ins-dup'));
+  }
+  return node;
+}
+function insertOpTrace(root, data, trace){
+  const ref = {root};
+  trace.push(snap(ref, null, `insertNode(${data}) called -> insertNodeHelper(root, ${data}).`, 'ins-start'));
+  ref.root = insertHelperTrace(ref.root, data, trace, ref);
+  trace.push(snap(ref, data, `Insertion finished. Tree updated.`, 'done'));
+  return ref.root;
+}
+
+/* ============================================================
+   5. SCENARIOS
+   ============================================================ */
+const scenarios = [
+  // ---- DELETE: 10 detailed cases (the main focus) ----
+  { group:'DELETE', name:'1. Delete a LEAF node (10)',
+    build:[50,30,70,20,40,60,80,10,25], op:'delete', val:10 },
+
+  { group:'DELETE', name:'2. Delete a node with ONLY a right child (20 → 25)',
+    build:[50,30,70,20,40,60,80,25], op:'delete', val:20 },
+
+  { group:'DELETE', name:'3. Delete a node with ONLY a left child (30 → 20)',
+    build:[50,30,20], op:'delete', val:30 },
+
+  { group:'DELETE', name:'4. Delete a node with TWO children (non-root, 30)',
+    build:[50,30,70,20,40,60,80,25,35], op:'delete', val:30 },
+
+  { group:'DELETE', name:'5. Delete the ROOT, which has two children (50)',
+    build:[50,30,70,20,40,60,80], op:'delete', val:50 },
+
+  { group:'DELETE', name:'6. Delete a value that does NOT exist (9999)',
+    build:[50,30,70,20,40,60,80], op:'delete', val:9999 },
+
+  { group:'DELETE', name:'7. Delete the ROOT of a single-node tree (99)',
+    build:[99], op:'delete', val:99 },
+
+  { group:'DELETE', name:'8. Delete from an EMPTY tree (5)',
+    build:[], op:'delete', val:5 },
+
+  { group:'DELETE', name:'9. Delete the SAME value TWICE (40, then 40 again)',
+    build:[50,30,70,20,40,60,80], op:'delete-twice', val:40 },
+
+  { group:'DELETE', name:'10. Delete ROOT where successor walk takes multiple steps (50)',
+    build:[50,30,70,60,80,75,90], op:'delete', val:50 },
+
+  // ---- INSERT (for completeness) ----
+  { group:'INSERT', name:'11. Insert into an empty tree (50)',
+    build:[], op:'insert', val:50 },
+
+  { group:'INSERT', name:'12. Insert a duplicate value (50, already in tree)',
+    build:[50,30,70], op:'insert', val:50 },
+
+  // ---- SEARCH (for completeness) ----
+  { group:'SEARCH', name:'13. Search for a value that EXISTS (70)',
+    build:[50,30,70,20,40,60,80], op:'search', val:70 },
+
+  { group:'SEARCH', name:'14. Search for a value that does NOT exist (9999)',
+    build:[50,30,70,20,40,60,80], op:'search', val:9999 },
+];
+
+function generateTrace(s){
+  let root = buildTree(s.build);
+  const trace = [];
+  trace.push({tree:clone(root), highlight:null,
+    msg:`Initial tree built from inserts: [${s.build.join(', ') || '(none — empty tree)'}].`, kind:'init'});
+
+  if(s.op === 'delete'){
+    deleteOpTrace(root, s.val, trace);
+  } else if(s.op === 'delete-twice'){
+    let r = deleteOpTrace(root, s.val, trace);
+    trace.push({tree:clone(r), highlight:null,
+      msg:`--- Now calling removeNode(${s.val}) a SECOND time on the updated tree ---`, kind:'sep'});
+    deleteOpTrace(r, s.val, trace);
+  } else if(s.op === 'insert'){
+    insertOpTrace(root, s.val, trace);
+  } else if(s.op === 'search'){
+    const ref = {root};
+    const found = searchTopTrace(root, s.val, trace, ref);
+    trace.push({tree:clone(ref.root), highlight:null,
+      msg:`Final result: search(${s.val}) returns ${found}.`, kind:'done'});
+  }
+  return trace;
+}
+
+/* ============================================================
+   6. RENDERING THE TREE AS SVG
+   ============================================================ */
+function layout(node, depth, counter){
+  if(node === null) return;
+  layout(node.left, depth+1, counter);
+  node.x = counter.i*90 + 60;
+  node.y = depth*100 + 50;
+  counter.i++;
+  layout(node.right, depth+1, counter);
+}
+function findExtents(node, ext){
+  if(node === null) return;
+  ext.maxX = Math.max(ext.maxX, node.x);
+  ext.maxY = Math.max(ext.maxY, node.y);
+  findExtents(node.left, ext);
+  findExtents(node.right, ext);
+}
+function renderTree(svg, root, highlight){
+  if(root === null){
+    svg.setAttribute('viewBox', '0 0 320 100');
+    svg.innerHTML = `<text x="20" y="55" fill="#9bb0d3" font-size="18" font-family="Segoe UI, Arial">
+                        Empty tree (root == nullptr)
+                      </text>`;
+    return;
+  }
+  layout(root, 0, {i:0});
+  const ext = {maxX:0, maxY:0};
+  findExtents(root, ext);
+  svg.setAttribute('viewBox', `0 0 ${ext.maxX + 80} ${ext.maxY + 70}`);
+
+  let html = '';
+  // edges first so they sit behind circles
+  (function edges(n){
+    if(n === null) return;
+    if(n.left){ html += `<line x1="${n.x}" y1="${n.y}" x2="${n.left.x}" y2="${n.left.y}" stroke="#3a4a70" stroke-width="2"/>`; edges(n.left); }
+    if(n.right){ html += `<line x1="${n.x}" y1="${n.y}" x2="${n.right.x}" y2="${n.right.y}" stroke="#3a4a70" stroke-width="2"/>`; edges(n.right); }
+  })(root);
+
+  (function nodes(n){
+    if(n === null) return;
+    const isHi = (highlight !== null && n.val === highlight);
+    const fill = isHi ? '#ffb703' : '#4a90d9';
+    const stroke = isHi ? '#e85d04' : '#2c5d8a';
+    const sw = isHi ? 4 : 2;
+    html += `<circle cx="${n.x}" cy="${n.y}" r="22" fill="${fill}" stroke="${stroke}" stroke-width="${sw}"/>`;
+    html += `<text x="${n.x}" y="${n.y+5}" text-anchor="middle" fill="#0b1220" font-size="15" font-weight="bold" font-family="Consolas, monospace">${n.val}</text>`;
+    nodes(n.left);
+    nodes(n.right);
+  })(root);
+
+  svg.innerHTML = html;
+}
+
+/* ============================================================
+   7. CODE PANELS + LINE HIGHLIGHTING
+   ============================================================ */
+const searchCode = [
+'bool search(int data) {',
+'    if (root == nullptr) return false;',
+'    if (root->val == data) return true;',
+'    return searchHelper(root, data);',
+'}',
+'bool searchHelper(TreeNode* root, int data) {',
+'    if (root == nullptr) return false;',
+'    if (root->val == data) return true;',
+'    else if (root->val > data) return searchHelper(root->left, data);',
+'    else return searchHelper(root->right, data);',
+'}'
+];
+
+const removeCode = [
+'void removeNode(int data) {',
+'    if (search(data)) {',
+'        removeNodeHelper(root, data);',
+'    } else {',
+'        cout << "could not found node :" << data << endl;',
+'    }',
+'}',
+'TreeNode* removeNodeHelper(TreeNode* root, int data) {',
+'    if (root == nullptr) return nullptr;',
+'    if (root->val > data) {',
+'        root->left = removeNodeHelper(root->left, data);',
+'    } else if (root->val < data) {',
+'        root->right = removeNodeHelper(root->right, data);',
+'    } else {',
+'        if (root->left == nullptr && root->right == nullptr) {',
+'            root = nullptr;',
+'        } else if (root->right != nullptr) {',
+'            root->val = successor(root);',
+'            root->right = removeNodeHelper(root->right, root->val);',
+'        } else {',
+'            root->val = predecessor(root);',
+'            root->left = removeNodeHelper(root->left, root->val);',
+'        }',
+'    }',
+'    return root;',
+'}'
+];
+
+const insertCode = [
+'TreeNode* insertNodeHelper(TreeNode* root, int data) {',
+'    if (root == nullptr) {',
+'        root = new TreeNode(data);',
+'    } else if (root->val > data) {',
+'        root->left = insertNodeHelper(root->left, data);',
+'    } else if (root->val < data) {',
+'        root->right = insertNodeHelper(root->right, data);',
+'    }',
+'    return root;',
+'}'
+];
+
+// kind -> {block:'search'|'remove'|'insert', lines:[1-based line numbers]}
+const kindMap = {
+  'init':       {block:null, lines:[]},
+  's-null':     {block:'search', lines:[2,7]},
+  's-eq':       {block:'search', lines:[3,8]},
+  's-left':     {block:'search', lines:[9]},
+  's-right':    {block:'search', lines:[10]},
+  'notfound':   {block:'remove', lines:[2,5,6]},
+  'start':      {block:'remove', lines:[2,3]},
+  'null':       {block:'remove', lines:[9]},
+  'cmp-left':   {block:'remove', lines:[10,11]},
+  'cmp-right':  {block:'remove', lines:[12,13]},
+  'found':      {block:'remove', lines:[14]},
+  'leaf':       {block:'remove', lines:[15,16]},
+  'succ-find':  {block:'remove', lines:[17,18]},
+  'succ-replace':{block:'remove', lines:[18,19]},
+  'pred-find':  {block:'remove', lines:[20,21]},
+  'pred-replace':{block:'remove', lines:[21,22]},
+  'return':     {block:'remove', lines:[25]},
+  'done':       {block:null, lines:[]},
+  'sep':        {block:null, lines:[]},
+  'ins-start':  {block:'insert', lines:[1]},
+  'ins-empty':  {block:'insert', lines:[2,3]},
+  'ins-left':   {block:'insert', lines:[4,5]},
+  'ins-right':  {block:'insert', lines:[6,7]},
+  'ins-dup':    {block:'insert', lines:[8]}
+};
+
+function renderCodeBlock(elId, codeArr){
+  const el = document.getElementById(elId);
+  el.innerHTML = codeArr.map((line, i) =>
+    `<span class="line" id="${elId}-${i+1}">${escapeHtml(line)}</span>`
+  ).join('\n');
+}
+function escapeHtml(s){
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function highlightCode(kind){
+  // clear all
+  document.querySelectorAll('.line.active').forEach(el => el.classList.remove('active'));
+  const info = kindMap[kind];
+  if(!info || !info.block) return;
+  const prefix = 'code-' + info.block;
+  for(const ln of info.lines){
+    const el = document.getElementById(`${prefix}-${ln}`);
+    if(el) el.classList.add('active');
+  }
+}
+
+/* ============================================================
+   8. UI WIRING
+   ============================================================ */
+const svg = document.getElementById('svg');
+const messageEl = document.getElementById('message');
+const stepCounterEl = document.getElementById('stepCounter');
+const selectEl = document.getElementById('scenario');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const playBtn = document.getElementById('playBtn');
+const resetBtn = document.getElementById('resetBtn');
+
+let currentTrace = [];
+let stepIndex = 0;
+let playTimer = null;
+
+function buildSelect(){
+  const groups = {};
+  scenarios.forEach((s, idx) => {
+    if(!groups[s.group]) groups[s.group] = [];
+    groups[s.group].push({s, idx});
+  });
+  for(const g of Object.keys(groups)){
+    const og = document.createElement('optgroup');
+    og.label = g;
+    groups[g].forEach(({s, idx}) => {
+      const opt = document.createElement('option');
+      opt.value = idx;
+      opt.textContent = s.name;
+      og.appendChild(opt);
+    });
+    selectEl.appendChild(og);
+  }
+}
+
+function loadScenario(idx){
+  stopPlay();
+  currentTrace = generateTrace(scenarios[idx]);
+  stepIndex = 0;
+  renderStep();
+}
+
+function renderStep(){
+  const step = currentTrace[stepIndex];
+  renderTree(svg, step.tree, step.highlight);
+  highlightCode(step.kind);
+
+  let prefix = '';
+  if(step.kind === 'sep') prefix = '🔁 ';
+  else if(step.kind === 'done') prefix = '✅ ';
+  else if(step.kind === 'notfound') prefix = '❌ ';
+  else if(step.kind && step.kind.startsWith('s-')) prefix = '🔍 ';
+  else if(step.kind && step.kind.startsWith('ins')) prefix = '➕ ';
+  else if(step.kind === 'init') prefix = '🌱 ';
+  else prefix = '➡️ ';
+
+  messageEl.innerHTML = `${prefix}<b>Step ${stepIndex+1}/${currentTrace.length}:</b> ${step.msg}`;
+  stepCounterEl.textContent = `Step ${stepIndex+1} / ${currentTrace.length}`;
+
+  prevBtn.disabled = stepIndex === 0;
+  nextBtn.disabled = stepIndex === currentTrace.length - 1;
+  if(stepIndex === currentTrace.length - 1) stopPlay();
+}
+
+function stopPlay(){
+  if(playTimer){ clearInterval(playTimer); playTimer = null; playBtn.textContent = '▶ Play'; }
+}
+
+prevBtn.addEventListener('click', () => {
+  if(stepIndex > 0){ stepIndex--; renderStep(); }
+});
+nextBtn.addEventListener('click', () => {
+  if(stepIndex < currentTrace.length - 1){ stepIndex++; renderStep(); }
+});
+resetBtn.addEventListener('click', () => loadScenario(parseInt(selectEl.value)));
+selectEl.addEventListener('change', () => loadScenario(parseInt(selectEl.value)));
+playBtn.addEventListener('click', () => {
+  if(playTimer){ stopPlay(); return; }
+  playBtn.textContent = '⏸ Pause';
+  playTimer = setInterval(() => {
+    if(stepIndex < currentTrace.length - 1){ stepIndex++; renderStep(); }
+    else stopPlay();
+  }, 1400);
+});
+
+/* init */
+renderCodeBlock('code-search', searchCode);
+renderCodeBlock('code-remove', removeCode);
+renderCodeBlock('code-insert', insertCode);
+buildSelect();
+loadScenario(0);
+</script>
+</body>
+</html>
